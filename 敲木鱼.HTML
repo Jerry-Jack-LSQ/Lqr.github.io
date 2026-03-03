@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>敲木鱼 - Zen Clicker</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #1a1a1a;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+      font-family: sans-serif;
+      color: white;
+      user-select: none;
+    }
+    canvas {
+      border: 2px solid #333;
+      cursor: pointer;
+    }
+    #info {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      font-size: 18px;
+    }
+    #levelInfo {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      font-size: 18px;
+      color: #ffcc00;
+    }
+    #zenMessage {
+      position: absolute;
+      bottom: 20px;
+      width: 100%;
+      text-align: center;
+      font-size: 16px;
+      color: #aaa;
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+    #shop {
+      position: absolute;
+      bottom: 60px;
+      width: 100%;
+      text-align: center;
+    }
+    .item {
+      display: inline-block;
+      margin: 5px;
+      padding: 5px 10px;
+      background-color: #333;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .item:hover {
+      background-color: #444;
+    }
+    #rewardModal {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.8);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    #rewardContent {
+      background-color: #222;
+      padding: 30px;
+      border-radius: 10px;
+      text-align: center;
+      max-width: 500px;
+    }
+    #rewardTitle {
+      color: gold;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+    #rewardText {
+      font-size: 18px;
+      line-height: 1.5;
+    }
+    #closeReward {
+      margin-top: 20px;
+      padding: 10px 20px;
+      background-color: #444;
+      border: none;
+      color: white;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">点击数: <span id="counter">0</span> | 道具: <span id="items">无</span></div>
+  <div id="levelInfo">第 <span id="level">1</span> 关 (难度: <span id="difficulty">0</span>)</div>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <div id="zenMessage"></div>
+  <div id="shop">
+    <div class="item" onclick="buyItem('double')">双倍点击 (100点击)</div>
+    <div class="item" onclick="buyItem('slow')">减速光环 (50点击)</div>
+    <div class="item" onclick="buyItem('magnet')">磁力吸引 (200点击)</div>
+    <div class="item" onclick="buyItem('shield')">防护罩 (150点击)</div>
+  </div>
+  
+  <div id="rewardModal">
+    <div id="rewardContent">
+      <h2 id="rewardTitle">通关奖励！</h2>
+      <p id="rewardText"></p>
+      <button id="closeReward">继续挑战</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const counterElement = document.getElementById('counter');
+    const levelElement = document.getElementById('level');
+    const difficultyElement = document.getElementById('difficulty');
+    const zenMessageElement = document.getElementById('zenMessage');
+    const itemsElement = document.getElementById('items');
+    const rewardModal = document.getElementById('rewardModal');
+    const rewardTitle = document.getElementById('rewardTitle');
+    const rewardText = document.getElementById('rewardText');
+    const closeReward = document.getElementById('closeReward');
+
+    // 游戏状态
+    let clicks = 0;
+    let currentLevel = 1;
+    let difficulty = 0;
+    let woodblocks = [{ x: 400, y: 300, radius: 60, speed: 0 }];
+    let particles = [];
+    let vibrationOffset = { x: 0, y: 0 };
+    let vibrationTimer = 0;
+    let items = { double: 0, slow: 0, magnet: 0, shield: 0 };
+    let activeEffects = { slow: 0, magnet: 0, shield: 0 };
+    let lastLevelComplete = 0;
+
+    // 难度配置
+    const difficultyLevels = [
+      { name: "新手村", speed: 0, blocks: 1, target: 100 },
+      { name: "修行路", speed: 3, blocks: 2, target: 200 },
+      { name: "磨难坡", speed: 3, blocks: 4, target: 300 },
+      { name: "地狱门", speed: 5, blocks: 8, target: 500 },
+      { name: "禅疯巅", speed: 10, blocks: 16, target: 800 },
+      { name: "极乐界", speed: 20, blocks: 16, target: 1200 }, // 6关
+      { name: "无间道", speed: 20, blocks: 16, target: 1600 }, // 7关
+      { name: "虚无境", speed: 25, blocks: 20, target: 2000 }, // 8关
+      { name: "空灵域", speed: 25, blocks: 20, target: 2500 }, // 9关
+      { name: "禅疯王", speed: 100, blocks: 25, target: 5000 } // 10关
+    ];
+
+    // 奖励配置
+    const rewards = [
+      "", // 1关
+      "解锁第2关！获得称号：初入禅门", 
+      "解锁第3关！获得称号：渐入佳境",
+      "解锁第4关！获得称号：修行精进",
+      "解锁第5关！获得称号：禅心初现",
+      "解锁第6关！获得称号：极乐行者", // 6关
+      "解锁第7关！获得称号：无间禅师", // 7关
+      "解锁第8关！获得称号：虚无大师", // 8关
+      "解锁第9关！获得称号：空灵尊者", // 9关
+      "恭喜！您已成为禅疯王！获得终极称号：狂禅之巅！<br>游戏已完成！" // 10关
+    ];
+
+    // 禅意毒鸡汤
+    const zenQuotes = [
+      "点击就是放下",
+      "敲得越多，烦恼越多",
+      "一念之间，皆是虚妄",
+      "心如止水，手速如飞",
+      "敲木鱼，敲出人生哲理",
+      "点击无罪，沉迷有理",
+      "今日敲木鱼，明日悟大道",
+      "木鱼已敲，禅心未静",
+      "狂敲不止，禅疯不息",
+      "敲破木鱼，敲碎执念"
+    ];
+
+    // 音频上下文
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    // 播放音效
+    function playSound(frequency = 120, duration = 0.1, type = 'square') {
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.type = type;
+      oscillator.frequency.value = frequency;
+      
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + duration);
+
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + duration);
+    }
+
+    // 更新关卡
+    function updateLevel() {
+      const levelData = difficultyLevels[currentLevel - 1];
+      if (clicks >= levelData.target && currentLevel !== lastLevelComplete) {
+        lastLevelComplete = currentLevel;
+        
+        // 显示奖励
+        rewardTitle.textContent = `第${currentLevel}关通关！`;
+        rewardText.innerHTML = rewards[currentLevel - 1];
+        rewardModal.style.display = 'flex';
+        
+        // 如果是第10关完成，显示特殊动画
+        if (currentLevel === 10) {
+          setTimeout(() => {
+            // 创建大量粒子庆祝
+            for (let i = 0; i < 100; i++) {
+              particles.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                vx: (Math.random() - 0.5) * 4,
+                vy: (Math.random() - 0.5) * 4,
+                size: Math.random() * 5 + 2,
+                life: 60,
+                color: `hsl(${Math.random() * 360}, 100%, 70%)`
+              });
+            }
+            
+            // 播放胜利音效
+            playSound(400, 1, 'sine');
+          }, 1000);
+        }
+        
+        // 进入下一关
+        if (currentLevel < 10) {
+          currentLevel++;
+          difficulty = difficultyLevels[currentLevel - 1].speed;
+          difficultyElement.textContent = difficulty;
+          levelElement.textContent = currentLevel;
+          
+          // 生成新难度的木鱼
+          woodblocks = [];
+          const blockCount = difficultyLevels[currentLevel - 1].blocks;
+          const radius = Math.max(20, 60 - (currentLevel - 1) * 3); // 第8、9关变小
+          const spacing = Math.min(120, Math.floor(canvas.width / Math.min(5, Math.ceil(Math.sqrt(blockCount)))));
+          const cols = Math.min(5, Math.ceil(Math.sqrt(blockCount)));
+          const rows = Math.ceil(blockCount / cols);
+          const startX = (canvas.width - (cols * spacing)) / 2;
+          const startY = (canvas.height - (rows * spacing)) / 2;
+          
+          for (let i = 0; i < blockCount; i++) {
+            const row = Math.floor(i / cols);
+            const col = i % cols;
+            woodblocks.push({
+              x: startX + col * spacing,
+              y: startY + row * spacing,
+              radius: radius,
+              speed: difficulty,
+              vx: (Math.random() - 0.5) * 2,
+              vy: (Math.random() - 0.5) * 2
+            });
+          }
+          
+          showZenMessage(`进入第${currentLevel}关！`);
+        }
+      }
+    }
+
+    // 绘制单个木鱼
+    function drawWoodblock(x, y, radius, isFlashing = false, hasShield = false) {
+      const flashColor = isFlashing ? '#ffffff' : '#000000';
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = flashColor;
+      ctx.fill();
+
+      // 木鱼纹理
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.8, 0, Math.PI);
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(x, y, radius * 0.6, 0, Math.PI);
+      ctx.strokeStyle = '#444';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      
+      // 防护罩效果
+      if (hasShield) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + 5, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    }
+
+    // 更新并绘制粒子
+    function updateParticles() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 1;
+
+        if (p.life <= 0) {
+          particles.splice(i, 1);
+          continue;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = p.color || `rgba(255, 215, 0, ${p.life / 30})`;
+        ctx.fill();
+      }
+    }
+
+    // 绘制
+    function render() {
+      // 应用震动偏移
+      ctx.save();
+      ctx.translate(vibrationOffset.x, vibrationOffset.y);
+
+      // 清空画布
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 绘制所有木鱼
+      woodblocks.forEach(block => {
+        drawWoodblock(block.x, block.y, block.radius, block.isFlashing, activeEffects.shield > 0);
+      });
+
+      // 更新和绘制粒子
+      updateParticles();
+
+      ctx.restore();
+    }
+
+    // 更新震动
+    function updateVibration() {
+      if (vibrationTimer > 0) {
+        vibrationOffset.x = (Math.random() - 0.5) * 4;
+        vibrationOffset.y = (Math.random() - 0.5) * 4;
+        vibrationTimer--;
+      } else {
+        vibrationOffset.x = 0;
+        vibrationOffset.y = 0;
+      }
+    }
+
+    // 更新木鱼移动
+    function updateWoodblocks() {
+      const slowFactor = activeEffects.slow > 0 ? 0.5 : 1;
+      
+      woodblocks.forEach(block => {
+        if (block.speed > 0) {
+          block.x += block.vx * block.speed * slowFactor;
+          block.y += block.vy * block.speed * slowFactor;
+
+          // 边界反弹
+          if (block.x - block.radius < 0 || block.x + block.radius > canvas.width) {
+            block.vx *= -1;
+          }
+          if (block.y - block.radius < 0 || block.y + block.radius > canvas.height) {
+            block.vy *= -1;
+          }
+        }
+      });
+    }
+
+    // 添加粒子效果
+    function addParticles(x, y) {
+      for (let i = 0; i < 10; i++) {
+        particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 4,
+          vy: (Math.random() - 0.5) * 4,
+          size: Math.random() * 3 + 1,
+          life: 30,
+          color: 'rgba(255, 215, 0, 1)'
+        });
+      }
+    }
+
+    // 显示禅意消息
+    function showZenMessage(msg) {
+      zenMessageElement.textContent = msg;
+      zenMessageElement.style.opacity = 1;
+      setTimeout(() => {
+        zenMessageElement.style.opacity = 0;
+      }, 2000);
+    }
+
+    // 购买道具
+    function buyItem(itemType) {
+      const costs = { double: 100, slow: 50, magnet: 200, shield: 150 };
+      if (clicks >= costs[itemType]) {
+        clicks -= costs[itemType];
+        items[itemType]++;
+        counterElement.textContent = clicks;
+        itemsElement.textContent = Object.entries(items).filter(([k, v]) => v > 0).map(([k, v]) => `${k}:${v}`).join(', ') || '无';
+        
+        // 激活效果
+        if (itemType === 'slow') activeEffects.slow = 300; // 5秒
+        if (itemType === 'shield') activeEffects.shield = 600; // 10秒
+        if (itemType === 'magnet') activeEffects.magnet = 150; // 2.5秒
+        
+        showZenMessage(`购买了${itemType}道具！`);
+      }
+    }
+
+    // 更新道具效果
+    function updateEffects() {
+      if (activeEffects.slow > 0) activeEffects.slow--;
+      if (activeEffects.shield > 0) activeEffects.shield--;
+      if (activeEffects.magnet > 0) activeEffects.magnet--;
+    }
+
+    // 处理点击
+    function handleClick(e) {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      for (const block of woodblocks) {
+        const dx = block.x - mouseX;
+        const dy = block.y - mouseY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist <= block.radius) {
+          let clickCount = 1 + items.double; // 双倍点击效果
+          
+          for (let i = 0; i < clickCount; i++) {
+            clicks++;
+            
+            // 播放音效
+            const baseFreq = 100 + (clicks % 10) * 5;
+            playSound(baseFreq, 0.1);
+
+            // 闪烁效果
+            block.isFlashing = true;
+            setTimeout(() => block.isFlashing = false, 100);
+
+            // 添加粒子
+            addParticles(block.x, block.y);
+          }
+          
+          counterElement.textContent = clicks;
+
+          // 特殊事件
+          if (clicks % 10 === 0) {
+            playSound(200, 0.3, 'sine');
+            addParticles(block.x, block.y);
+          }
+
+          if (clicks % 50 === 0) {
+            vibrationTimer = 120; // 2秒震动 (60fps)
+            const quote = zenQuotes[Math.floor(Math.random() * zenQuotes.length)];
+            showZenMessage(quote);
+          }
+
+          break;
+        }
+      }
+    }
+
+    canvas.addEventListener('click', handleClick);
+    
+    // 关闭奖励弹窗
+    closeReward.addEventListener('click', () => {
+      rewardModal.style.display = 'none';
+    });
+
+    // 游戏循环
+    function gameLoop() {
+      updateVibration();
+      updateWoodblocks();
+      updateEffects();
+      updateLevel();
+      render();
+      requestAnimationFrame(gameLoop);
+    }
+
+    // 初始化
+    difficultyElement.textContent = difficulty;
+    itemsElement.textContent = '无';
+    gameLoop();
+  </script>
+</body>
+</html>
